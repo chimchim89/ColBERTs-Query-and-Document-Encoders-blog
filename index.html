@@ -99,7 +99,7 @@
                     Understanding ColBERT's Query and Document Encoders
                 </h1>
                 <div class="flex items-center justify-center gap-4 text-sm text-gray-400">
-                    <time datetime="2026-09-09">September 10, 2026</time>
+                    <time datetime="2026-09-09">September 9, 2026</time>
                     <span>·</span>
                     <span>10 min read</span>
                 </div>
@@ -190,16 +190,16 @@
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">5. Embedding Dimension, Storage, and Query Latency</h2>
                 <p class="mb-6">
-                    <code>m</code> is just how many numbers make up one embedding, the same way a 3D point is three numbers. ColBERT keeps it small, around 128, even though BERT's own vectors are 768 numbers wide — that's what the linear layer shrinks them down to.
+                    <code>m</code> is just how many numbers make up one embedding, the same way a 3D point is three numbers. ColBERT keeps it small, around 128, even though BERT's own vectors are 768 numbers wide, and that's what the linear layer shrinks them down to.
                 </p>
                 <p class="mb-6">
                     On the query side this barely matters. A query is only a handful of tokens, so encoding them is fast no matter how big <code>m</code> is.
                 </p>
                 <p class="mb-6">
-                    Documents are where it counts. ColBERT stores one embedding per token, and a real collection has millions of documents with hundreds of tokens each. Storage scales directly with <code>m</code> — double it, and the index roughly doubles in size. That's why <code>m</code> stays small: not for accuracy, but for storage.
+                    Documents are where it counts. ColBERT stores one embedding per token, and a real collection has millions of documents with hundreds of tokens each. Storage scales directly with <code>m</code>: double it, and the index roughly doubles in size. That's why <code>m</code> stays small: not for accuracy, but for storage.
                 </p>
                 <p class="mb-6">
-                    It slows queries down too. Document embeddings live off the GPU, in CPU memory, since there are too many to keep loaded. So scoring a query means first pulling the right embeddings off the CPU and shipping them to the GPU — and that transfer, not the actual scoring, is often the slowest part of ColBERT's re-ranking.
+                    It slows queries down too. Document embeddings live off the GPU, in CPU memory, since there are too many to keep loaded. So scoring a query means first pulling the right embeddings off the CPU and shipping them to the GPU, and that transfer, not the actual scoring, is often the slowest part of ColBERT's re-ranking.
                 </p>
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">6. Normalization: Turning Dot Products into Cosine Similarity</h2>
@@ -319,7 +319,7 @@
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">8. Putting It All Together</h2>
                 <p class="mb-6">
-                    Given a query <code>q = q₀q₁...ql</code> and a document <code>d = d₀d₁...dn</code>, ColBERT computes the bags of embeddings <code>Eq</code> and <code>Ed</code> as follows, where <code>#</code> denotes the <code>[mask]</code> tokens. One notation note before you read them: <code>CNN</code> here is just the paper's label for the linear projection layer from Section 4, not a convolutional neural network — there's no convolution happening anywhere in this pipeline.
+                    Given a query <code>q = q₀q₁...ql</code> and a document <code>d = d₀d₁...dn</code>, ColBERT computes the bags of embeddings <code>Eq</code> and <code>Ed</code> as follows, where <code>#</code> denotes the <code>[mask]</code> tokens. One notation note before you read them: <code>CNN</code> here is just the paper's label for the linear projection layer from Section 4, not a convolutional neural network. There's no convolution happening anywhere in this pipeline.
                 </p>
                 <div class="my-8 space-y-4">
                     <div class="flex items-baseline justify-between gap-6">
