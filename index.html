@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog | Understanding ColBERT's Query and Document Encoders</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Times New Roman', Times, Georgia, serif;
+            background-color: #ffffff;
+            color: #1a1a1a;
+        }
+        .serif-heading {
+            font-family: 'Times New Roman', Times, Georgia, serif;
+            letter-spacing: -0.02em;
+        }
+        .gradient-button {
+            background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+            border: 1px solid #e2e8f0;
+            transition: all 0.2s ease;
+        }
+        .gradient-button:hover {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            transform: translateY(-1px);
+        }
+        .nav-container {
+            backdrop-filter: blur(8px);
+            background: rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            border-radius: 999px;
+        }
+        .prose h1, .prose h2, .prose h3 {
+            font-family: 'Times New Roman', Times, Georgia, serif;
+            letter-spacing: -0.02em;
+        }
+        .prose p {
+            color: #4a4a4a;
+            line-height: 1.8;
+        }
+        .prose a {
+            color: #1a1a1a;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+        .prose blockquote {
+            border-left: 2px solid #e2e8f0;
+            padding-left: 1.5rem;
+            color: #6b6b6b;
+            font-style: italic;
+        }
+        .prose code {
+            background: #f5f5f5;
+            padding: 0.125rem 0.375rem;
+            border-radius: 0.25rem;
+            font-size: 0.875em;
+        }
+        .prose pre {
+            background: #f8f8f8;
+            padding: 1rem 1.25rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+        }
+        .prose pre code {
+            background: none;
+            padding: 0;
+        }
+        .prose img {
+            max-width: 100%;
+            height: auto;
+        }
+        @media (max-width: 640px) {
+            .serif-heading {
+                font-size: 1.875rem;
+            }
+            h2 {
+                font-size: 1.5rem !important;
+            }
+            h3 {
+                font-size: 1.25rem !important;
+            }
+            .prose p {
+                font-size: 0.95rem;
+                line-height: 1.7;
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center">
+
+    <main class="flex-1 w-full max-w-3xl mx-auto px-4 sm:px-6 pt-12 sm:pt-16 pb-16 sm:pb-20">
+
+        <article>
+            <header class="mb-16 text-center">
+                <div class="mb-6 px-4 py-1 border border-gray-100 bg-gray-50 rounded-full text-[10px] tracking-[0.2em] text-gray-400 uppercase font-semibold inline-block">
+                    Article
+                </div>
+                <h1 class="serif-heading text-3xl sm:text-4xl md:text-5xl lg:text-6xl text-gray-800 leading-tight mb-6">
+                    Understanding ColBERT's Query and Document Encoders
+                </h1>
+                <div class="flex items-center justify-center gap-4 text-sm text-gray-400">
+                    <time datetime="2026-09-09">September 10, 2026</time>
+                    <span>·</span>
+                    <span>10 min read</span>
+                </div>
+            </header>
+
+            <div class="prose prose-lg mx-auto">
+                <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">1. Introduction</h2>
+                <p class="mb-6">
+                    Before ColBERT can compare a query against a document, it has to turn both of them into something a machine can actually compare: vectors. How it does this conversion turns out to matter a lot. Get it wrong, and the late interaction mechanism sitting on top has nothing good to work with.
+                </p>
+                <p class="mb-6">
+                    ColBERT handles this with two encoders, a query encoder and a document encoder, both built on top of BERT. They share the same underlying model but treat their inputs a little differently, and those small differences are where most of the interesting design decisions live.
+                </p>
+                <p class="mb-6">
+                    This post walks through exactly how each encoder works, why query augmentation exists, and why the final embeddings end up normalized to unit length.
+                </p>
+
+                <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">2. One BERT, Two Jobs</h2>
+                <p class="mb-6">
+                    ColBERT converts each query and each document into a set, or "bag," of embeddings before the late interaction step ever happens. Instead of training two separate models for this, it uses the same BERT model for both queries and documents. What tells BERT which kind of input it's looking at is a special token prepended at the very start: <code>[Q]</code> for queries and <code>[D]</code> for documents.
+                </p>
+                <p class="mb-6">
+                    That single design choice, sharing weights and distinguishing inputs with a marker token, is what keeps the two encoders consistent with each other while still letting them behave differently downstream.
+                </p>
+
+                <figure class="my-10">
+                    <svg viewBox="0 0 680 370" xmlns="http://www.w3.org/2000/svg" class="w-full">
+                        <defs>
+                            <marker id="arrowhead1" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                                <path d="M0,0 L6,3 L0,6 Z" fill="#1a1a1a"/>
+                            </marker>
+                        </defs>
+
+                        <text x="340" y="30" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="22" fill="#1a1a1a">One BERT, Two Encoders</text>
+                        <text x="340" y="50" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">same weights, only the [Q] / [D] marker differs</text>
+
+                        <rect x="45" y="60" width="590" height="290" rx="20" fill="none" stroke="#1a1a1a" stroke-width="1.3"/>
+
+                        <rect x="80" y="90" width="220" height="50" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="190" y="120" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Query</text>
+                        <line x1="190" y1="140" x2="190" y2="170" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead1)"/>
+
+                        <rect x="80" y="176" width="220" height="60" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="190" y="198" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Query Encoder</text>
+                        <text x="190" y="216" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">[Q] marker</text>
+                        <line x1="190" y1="236" x2="190" y2="266" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead1)"/>
+
+                        <rect x="80" y="272" width="220" height="50" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="190" y="302" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Eq</text>
+
+                        <rect x="380" y="90" width="220" height="50" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="490" y="120" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Document</text>
+                        <line x1="490" y1="140" x2="490" y2="170" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead1)"/>
+
+                        <rect x="380" y="176" width="220" height="60" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="490" y="198" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Document Encoder</text>
+                        <text x="490" y="216" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">[D] marker</text>
+                        <line x1="490" y1="236" x2="490" y2="266" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead1)"/>
+
+                        <rect x="380" y="272" width="220" height="50" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="490" y="302" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Ed</text>
+                    </svg>
+                </figure>
+
+                <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">3. The Query Encoder</h2>
+                <p class="mb-6">
+                    The query encoder starts by breaking the query into BERT's WordPiece tokens. It then inserts the <code>[Q]</code> token immediately after BERT's <code>[CLS]</code> token, marking the input as a query.
+                </p>
+                <p class="mb-6">
+                    Queries are forced into a fixed length, <code>Nq</code>. If the query is shorter than that, ColBERT pads it out with <code>[mask]</code> tokens. If it's longer, only the first <code>Nq</code> tokens are kept. This padded sequence is what actually gets passed through BERT, which produces a contextualized representation for every token in it.
+                </p>
+
+                <h3 class="text-xl sm:text-2xl text-gray-800 mt-8 sm:mt-10 mb-3 sm:mb-4">3.1 Query Augmentation</h3>
+                <p class="mb-6">
+                    Padding a query with <code>[mask]</code> tokens sounds like a minor implementation detail, but it's actually doing real work. This is what the ColBERT paper calls query augmentation, and it lets BERT produce query-based embeddings at those masked positions rather than leaving them empty.
+                </p>
+                <p class="mb-6">
+                    Functionally, it gives the model a soft, differentiable way to expand the query with new terms or re-weight the importance of existing ones, without anyone hand-engineering that expansion. The masks effectively become extra "slots" the model can fill with whatever it thinks is relevant to matching the query.
+                </p>
+
+                <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">4. The Linear Projection Layer</h2>
+                <p class="mb-6">
+                    BERT itself produces a contextualized vector for every token. ColBERT then passes each of these vectors through a linear layer, which projects BERT's original representation down into a smaller, <code>m</code>-dimensional embedding. BERT, for example, might output a 768-dimensional vector, and the linear layer compresses that into something like a 128-dimensional one.
+                </p>
+                <p class="mb-6">
+                    Normally, a network might follow a linear layer with an activation function, ReLU being the obvious example, to filter or reshape the output. ColBERT skips that step entirely. There's no activation here: the linear layer's raw output is used directly as the embedding.
+                </p>
+
+                <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">5. Embedding Dimension, Storage, and Query Latency</h2>
+                <p class="mb-6">
+                    <code>m</code> is just how many numbers make up one embedding, the same way a 3D point is three numbers. ColBERT keeps it small, around 128, even though BERT's own vectors are 768 numbers wide — that's what the linear layer shrinks them down to.
+                </p>
+                <p class="mb-6">
+                    On the query side this barely matters. A query is only a handful of tokens, so encoding them is fast no matter how big <code>m</code> is.
+                </p>
+                <p class="mb-6">
+                    Documents are where it counts. ColBERT stores one embedding per token, and a real collection has millions of documents with hundreds of tokens each. Storage scales directly with <code>m</code> — double it, and the index roughly doubles in size. That's why <code>m</code> stays small: not for accuracy, but for storage.
+                </p>
+                <p class="mb-6">
+                    It slows queries down too. Document embeddings live off the GPU, in CPU memory, since there are too many to keep loaded. So scoring a query means first pulling the right embeddings off the CPU and shipping them to the GPU — and that transfer, not the actual scoring, is often the slowest part of ColBERT's re-ranking.
+                </p>
+
+                <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">6. Normalization: Turning Dot Products into Cosine Similarity</h2>
+                <p class="mb-6">
+                    Once the embeddings are produced, ColBERT normalizes each one so its L2 norm, its vector length, equals 1. This makes direction the only thing that matters about an embedding, not magnitude.
+                </p>
+                <p class="mb-6">
+                    Because both the query and document embeddings have length 1 after normalization, their dot product ends up being mathematically identical to their cosine similarity. That means ColBERT can just compute a plain dot product instead of running a separate cosine similarity calculation, which is a much cheaper operation. The resulting similarity score falls somewhere between -1 and 1.
+                </p>
+
+                <figure class="my-10">
+                    <svg viewBox="0 0 680 590" xmlns="http://www.w3.org/2000/svg" class="w-full max-w-md mx-auto">
+                        <defs>
+                            <marker id="arrowhead2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                                <path d="M0,0 L6,3 L0,6 Z" fill="#1a1a1a"/>
+                            </marker>
+                        </defs>
+
+                        <text x="340" y="30" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="22" fill="#1a1a1a">Query Encoder Pipeline</text>
+
+                        <rect x="140" y="55" width="400" height="511" rx="20" fill="none" stroke="#1a1a1a" stroke-width="1.3"/>
+
+                        <rect x="180" y="70" width="320" height="44" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="97" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Query text</text>
+                        <line x1="340" y1="114" x2="340" y2="134" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead2)"/>
+
+                        <rect x="180" y="134" width="320" height="44" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="161" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">WordPiece tokens</text>
+                        <line x1="340" y1="178" x2="340" y2="198" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead2)"/>
+
+                        <rect x="180" y="198" width="320" height="60" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="221" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">[CLS] [Q] + tokens</text>
+                        <text x="340" y="239" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">+ [mask] pad to Nq</text>
+                        <line x1="340" y1="258" x2="340" y2="278" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead2)"/>
+
+                        <rect x="180" y="278" width="320" height="44" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="305" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">BERT</text>
+                        <line x1="340" y1="322" x2="340" y2="342" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead2)"/>
+
+                        <rect x="180" y="342" width="320" height="60" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="365" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Linear layer</text>
+                        <text x="340" y="383" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">(no activation)</text>
+                        <line x1="340" y1="402" x2="340" y2="422" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead2)"/>
+
+                        <rect x="180" y="422" width="320" height="60" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="445" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Normalize</text>
+                        <text x="340" y="463" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">(L2 norm = 1)</text>
+                        <line x1="340" y1="482" x2="340" y2="502" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead2)"/>
+
+                        <rect x="180" y="502" width="320" height="44" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="529" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Eq</text>
+                    </svg>
+                </figure>
+
+                <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">7. The Document Encoder</h2>
+                <p class="mb-6">
+                    The document encoder mirrors the query encoder almost exactly. ColBERT breaks the document into its individual tokens, then prepends <code>[CLS]</code> followed by the special <code>[D]</code> token to mark the sequence as a document rather than a query.
+                </p>
+                <p class="mb-6">
+                    One notable difference: documents are never padded with <code>[mask]</code> tokens the way queries are. There's no query augmentation equivalent on the document side.
+                </p>
+                <p class="mb-6">
+                    The resulting sequence is passed through BERT and then the same linear layer used elsewhere, producing an embedding for each token. After that, ColBERT does one more thing that queries don't get: it strips out the embeddings corresponding to punctuation marks, using a predefined list of punctuation tokens, to cut down on how many embeddings need to be stored per document.
+                </p>
+                <p class="mb-6">
+                    The reasoning behind this is a hypothesis rather than a proven fact: the authors believe punctuation embeddings, even though they're contextualized like everything else, don't contribute meaningfully to retrieval effectiveness, so there's little reason to pay the storage cost of keeping them around.
+                </p>
+
+                <figure class="my-10">
+                    <svg viewBox="0 0 680 670" xmlns="http://www.w3.org/2000/svg" class="w-full max-w-md mx-auto">
+                        <defs>
+                            <marker id="arrowhead3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                                <path d="M0,0 L6,3 L0,6 Z" fill="#1a1a1a"/>
+                            </marker>
+                        </defs>
+
+                        <text x="340" y="30" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="22" fill="#1a1a1a">Document Encoder Pipeline</text>
+
+                        <rect x="140" y="55" width="400" height="591" rx="20" fill="none" stroke="#1a1a1a" stroke-width="1.3"/>
+
+                        <rect x="180" y="70" width="320" height="44" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="97" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Document text</text>
+                        <line x1="340" y1="114" x2="340" y2="134" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead3)"/>
+
+                        <rect x="180" y="134" width="320" height="44" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="161" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">WordPiece tokens</text>
+                        <line x1="340" y1="178" x2="340" y2="198" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead3)"/>
+
+                        <rect x="180" y="198" width="320" height="60" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="221" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">[CLS] [D] + tokens</text>
+                        <text x="340" y="239" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">(no mask padding)</text>
+                        <line x1="340" y1="258" x2="340" y2="278" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead3)"/>
+
+                        <rect x="180" y="278" width="320" height="44" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="305" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">BERT</text>
+                        <line x1="340" y1="322" x2="340" y2="342" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead3)"/>
+
+                        <rect x="180" y="342" width="320" height="60" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="365" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Linear layer</text>
+                        <text x="340" y="383" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">(no activation)</text>
+                        <line x1="340" y1="402" x2="340" y2="422" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead3)"/>
+
+                        <rect x="180" y="422" width="320" height="60" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="445" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Normalize</text>
+                        <text x="340" y="463" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">(L2 norm = 1)</text>
+                        <line x1="340" y1="482" x2="340" y2="502" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead3)"/>
+
+                        <rect x="180" y="502" width="320" height="60" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="525" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Filter</text>
+                        <text x="340" y="543" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="13" fill="#4a4a4a">(remove punctuation)</text>
+                        <line x1="340" y1="562" x2="340" y2="582" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#arrowhead3)"/>
+
+                        <rect x="180" y="582" width="320" height="44" rx="16" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.2"/>
+                        <text x="340" y="609" text-anchor="middle" font-family="Times New Roman, Georgia, serif" font-size="14" fill="#1a1a1a">Ed</text>
+                    </svg>
+                </figure>
+
+                <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">8. Putting It All Together</h2>
+                <p class="mb-6">
+                    Given a query <code>q = q₀q₁...ql</code> and a document <code>d = d₀d₁...dn</code>, ColBERT computes the bags of embeddings <code>Eq</code> and <code>Ed</code> as follows, where <code>#</code> denotes the <code>[mask]</code> tokens. One notation note before you read them: <code>CNN</code> here is just the paper's label for the linear projection layer from Section 4, not a convolutional neural network — there's no convolution happening anywhere in this pipeline.
+                </p>
+                <div class="my-8 space-y-4">
+                    <div class="flex items-baseline justify-between gap-6">
+                        <p style="font-family: 'Times New Roman', Georgia, serif; font-style: italic; color: #1a1a1a;" class="text-base sm:text-lg">
+                            E<sub>q</sub> := Normalize( CNN( BERT( &ldquo;[Q]q<sub>0</sub>q<sub>1</sub>...q<sub>l</sub>##...#&rdquo; ) ) )
+                        </p>
+                        <span class="text-gray-400 text-sm" style="font-family: 'Times New Roman', Georgia, serif;">(1)</span>
+                    </div>
+                    <div class="flex items-baseline justify-between gap-6">
+                        <p style="font-family: 'Times New Roman', Georgia, serif; font-style: italic; color: #1a1a1a;" class="text-base sm:text-lg">
+                            E<sub>d</sub> := Filter( Normalize( CNN( BERT( &ldquo;[D]d<sub>0</sub>d<sub>1</sub>...d<sub>n</sub>&rdquo; ) ) ) )
+                        </p>
+                        <span class="text-gray-400 text-sm" style="font-family: 'Times New Roman', Georgia, serif;">(2)</span>
+                    </div>
+                </div>
+                <p class="mb-6">
+                    These two equations are really just a compact restatement of everything above. For a query, ColBERT adds the <code>[Q]</code> token and <code>[mask]</code> padding, runs everything through BERT, passes it through the linear projection layer (written as <code>CNN</code> in the equation), and normalizes the result to get <code>Eq</code>. For a document, it adds <code>[D]</code>, runs it through BERT and the same linear projection layer, normalizes it, and then filters out the punctuation embeddings to arrive at <code>Ed</code>.
+                </p>
+
+                <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">9. Conclusion</h2>
+                <p class="mb-6">
+                    Neither encoder does anything exotic on its own. Tokenize, mark the input type, run it through BERT, project it down with a linear layer, normalize it. What makes the design interesting is the handful of asymmetries between the two: query augmentation on one side, punctuation filtering on the other, a fixed length for queries versus a variable one for documents.
+                </p>
+                <p class="mb-6">
+                    Each of these choices exists for a reason grounded in the trade-off ColBERT is built around: keep documents cheap to store and index offline, while giving queries just enough flexibility at inference time to make late interaction actually work.
+                </p>
+            </div>
+
+        </article>
+
+    </main>
+
+    <footer class="py-12 text-center text-sm text-gray-400">
+        <p>Written by Achal.</p>
+    </footer>
+
+</body>
+</html>
