@@ -99,7 +99,7 @@
                     Understanding ColBERT's Query and Document Encoders
                 </h1>
                 <div class="flex items-center justify-center gap-4 text-sm text-gray-400">
-                    <time datetime="2026-09-09">September 9, 2026</time>
+                    <time datetime="2026-09-09">September 15, 2026</time>
                     <span>·</span>
                     <span>10 min read</span>
                 </div>
@@ -108,21 +108,21 @@
             <div class="prose prose-lg mx-auto">
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">1. Introduction</h2>
                 <p class="mb-6">
-                    Before ColBERT can compare a query against a document, it has to turn both of them into something a machine can actually compare: vectors. How it does this conversion turns out to matter a lot. Get it wrong, and the late interaction mechanism sitting on top has nothing good to work with.
+                    Before ColBERT can compare a query against a document, it first needs to convert them into vectors, basically into numbers that a machine can compare. The way ColBERT does this conversion matters a lot, as the late interaction step depends on it. If it is not properly done, the final comparison won't be good either.
                 </p>
                 <p class="mb-6">
-                    ColBERT handles this with two encoders, a query encoder and a document encoder, both built on top of BERT. They share the same underlying model but treat their inputs a little differently, and those small differences are where most of the interesting design decisions live.
+                    ColBERT does this with two encoders, a query encoder and a document encoder; both are built on top of BERT. There are many similarities in their working, but each encoder treats its inputs slightly differently. These small differences are important because they affect how ColBERT represents and compares queries and documents.
                 </p>
                 <p class="mb-6">
-                    This post walks through exactly how each encoder works, why query augmentation exists, and why the final embeddings end up normalized to unit length.
+                    This article walks through exactly how each encoder works, why query augmentation exists, and why the final embeddings are normalized to unit length.
                 </p>
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">2. One BERT, Two Jobs</h2>
                 <p class="mb-6">
-                    ColBERT converts each query and each document into a set, or "bag," of embeddings before the late interaction step ever happens. Instead of training two separate models for this, it uses the same BERT model for both queries and documents. What tells BERT which kind of input it's looking at is a special token prepended at the very start: <code>[Q]</code> for queries and <code>[D]</code> for documents.
+                    ColBERT turns each query and each document into a collection of embeddings before the late interaction step ever happens. Instead of using two separate models for this, it uses the same BERT model for both queries and documents. To tell BERT what kind of input it's processing, ColBERT adds a special token right after the <code>[CLS]</code> token: <code>[Q]</code> for queries and <code>[D]</code> for documents.
                 </p>
                 <p class="mb-6">
-                    That single design choice, sharing weights and distinguishing inputs with a marker token, is what keeps the two encoders consistent with each other while still letting them behave differently downstream.
+                    By using the same BERT model and adding a marker token to distinguish between queries and documents, ColBERT can keep both embeddings consistent with each other while still allowing the model to treat them differently.
                 </p>
 
                 <figure class="my-10">
@@ -166,48 +166,48 @@
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">3. The Query Encoder</h2>
                 <p class="mb-6">
-                    The query encoder starts by breaking the query into BERT's WordPiece tokens. It then inserts the <code>[Q]</code> token immediately after BERT's <code>[CLS]</code> token, marking the input as a query.
+                    The query encoder first breaks the query into BERT's WordPiece tokens. Then it inserts a special <code>[Q]</code> token immediately after BERT's <code>[CLS]</code> token, telling BERT this is a query input.
                 </p>
                 <p class="mb-6">
-                    Queries are forced into a fixed length, <code>Nq</code>. If the query is shorter than that, ColBERT pads it out with <code>[mask]</code> tokens. If it's longer, only the first <code>Nq</code> tokens are kept. This padded sequence is what actually gets passed through BERT, which produces a contextualized representation for every token in it.
+                    ColBERT makes every query the same length, <code>Nq</code>. If the query is shorter than that, ColBERT adds <code>[mask]</code> tokens until it reaches <code>Nq</code>. And if the query is longer than that, ColBERT keeps the first <code>Nq</code> tokens. This final sequence is then passed through BERT, which produces a contextualized representation for every token in it.
                 </p>
 
                 <h3 class="text-xl sm:text-2xl text-gray-800 mt-8 sm:mt-10 mb-3 sm:mb-4">3.1 Query Augmentation</h3>
                 <p class="mb-6">
-                    Padding a query with <code>[mask]</code> tokens sounds like a minor implementation detail, but it's actually doing real work. This is what the ColBERT paper calls query augmentation, and it lets BERT produce query-based embeddings at those masked positions rather than leaving them empty.
+                    Padding a query with <code>[mask]</code> tokens might seem like a small technical detail, but it has a really important purpose; the ColBERT paper calls this query augmentation. Instead of leaving those extra positions empty, the <code>[mask]</code> tokens give BERT additional positions where it can produce contextualized, query-based embeddings.
                 </p>
                 <p class="mb-6">
-                    Functionally, it gives the model a soft, differentiable way to expand the query with new terms or re-weight the importance of existing ones, without anyone hand-engineering that expansion. The masks effectively become extra "slots" the model can fill with whatever it thinks is relevant to matching the query.
+                    In simple words, it gives the model a way to expand the query with new terms or re-weight the importance of existing ones, without anyone hand-engineering that expansion. The <code>[mask]</code> tokens effectively become extra "slots" where the model can learn to create new query related embeddings which helps to find relevant documents.
                 </p>
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">4. The Linear Projection Layer</h2>
                 <p class="mb-6">
-                    BERT itself produces a contextualized vector for every token. ColBERT then passes each of these vectors through a linear layer, which projects BERT's original representation down into a smaller, <code>m</code>-dimensional embedding. BERT, for example, might output a 768-dimensional vector, and the linear layer compresses that into something like a 128-dimensional one.
+                    BERT creates a contextualized vector for every token. ColBERT then passes each of these vectors through a linear layer, which reduces BERT's original representation into a smaller, <code>m</code>-dimensional embedding. For example, BERT might produce a 768-dimensional vector, and the linear layer compresses that into something like a 128-dimensional one.
                 </p>
                 <p class="mb-6">
-                    Normally, a network might follow a linear layer with an activation function, ReLU being the obvious example, to filter or reshape the output. ColBERT skips that step entirely. There's no activation here: the linear layer's raw output is used directly as the embedding.
+                    Normally, after a linear layer, a neural network adds an activation function, for example ReLU, to filter or reshape the output. ColBERT does not follow this approach. There's no activation function used here: the linear layer's final output is used directly as the embedding.
                 </p>
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">5. Embedding Dimension, Storage, and Query Latency</h2>
                 <p class="mb-6">
-                    <code>m</code> is just how many numbers make up one embedding, the same way a 3D point is three numbers. ColBERT keeps it small, around 128, even though BERT's own vectors are 768 numbers wide, and that's what the linear layer shrinks them down to.
+                    <code>m</code> denotes how many numbers make one embedding, just like how a 3D point is three numbers. ColBERT keeps this embedding small, typically around 128, even though BERT's own vectors are 768 numbers wide. The linear layer reduces them down to smaller numbers while keeping the important information needed for matching.
                 </p>
                 <p class="mb-6">
-                    On the query side this barely matters. A query is only a handful of tokens, so encoding them is fast no matter how big <code>m</code> is.
+                    On the query side, this does not make much difference. A query only contains a few tokens, and encoding them is fast no matter how big <code>m</code> is.
                 </p>
                 <p class="mb-6">
-                    Documents are where it counts. ColBERT stores one embedding per token, and a real collection has millions of documents with hundreds of tokens each. Storage scales directly with <code>m</code>: double it, and the index roughly doubles in size. That's why <code>m</code> stays small: not for accuracy, but for storage.
+                    Documents are where the embedding size really matters. ColBERT stores one embedding per token, and a real collection contains millions of documents, each document with hundreds of tokens. Storage is directly proportional to <code>m</code>: the larger the embedding size, the more storage ColBERT needs. If we double <code>m</code>, the index will also roughly double in size. That's why ColBERT keeps <code>m</code> small: not to improve accuracy, but to reduce storage.
                 </p>
                 <p class="mb-6">
-                    It slows queries down too. Document embeddings live off the GPU, in CPU memory, since there are too many to keep loaded. So scoring a query means first pulling the right embeddings off the CPU and shipping them to the GPU, and that transfer, not the actual scoring, is often the slowest part of ColBERT's re-ranking.
+                    The large size of <code>m</code> also makes the queries slower. ColBERT stores the embeddings in CPU memory as they could not fit into the GPU because of their huge size. Therefore, ColBERT first needs to move the relevant document embeddings from the CPU to the GPU at the time of scoring the query. And this transfer of data can take more time than the actual scoring, which makes it the slowest part of ColBERT's re-ranking.
                 </p>
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">6. Normalization: Turning Dot Products into Cosine Similarity</h2>
                 <p class="mb-6">
-                    Once the embeddings are produced, ColBERT normalizes each one so its L2 norm, its vector length, equals 1. This makes direction the only thing that matters about an embedding, not magnitude.
+                    Once the embeddings are created, ColBERT normalizes each one so its vector length (L2 norm) equals 1. After this, the size of its values does not matter; ColBERT only depends on the direction of the vector.
                 </p>
                 <p class="mb-6">
-                    Because both the query and document embeddings have length 1 after normalization, their dot product ends up being mathematically identical to their cosine similarity. That means ColBERT can just compute a plain dot product instead of running a separate cosine similarity calculation, which is a much cheaper operation. The resulting similarity score falls somewhere between -1 and 1.
+                    Since both the query and document embeddings have length 1 after normalization, their dot product will be mathematically identical to their cosine similarity. That means instead of running a separate cosine similarity calculation, ColBERT can just compute a plain dot product, which makes the operation much cheaper. And the resulting similarity score ranges between -1 and 1.
                 </p>
 
                 <figure class="my-10">
@@ -256,16 +256,16 @@
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">7. The Document Encoder</h2>
                 <p class="mb-6">
-                    The document encoder mirrors the query encoder almost exactly. ColBERT breaks the document into its individual tokens, then prepends <code>[CLS]</code> followed by the special <code>[D]</code> token to mark the sequence as a document rather than a query.
+                    The document encoder works almost exactly like the query encoder. ColBERT splits the document into its individual tokens, then it adds <code>[CLS]</code> followed by the special <code>[D]</code> token at the beginning to tell BERT that it is a document input, not a query input.
                 </p>
                 <p class="mb-6">
-                    One notable difference: documents are never padded with <code>[mask]</code> tokens the way queries are. There's no query augmentation equivalent on the document side.
+                    Unlike queries, ColBERT doesn't pad documents with <code>[mask]</code> tokens; it only uses query augmentation on the query side.
                 </p>
                 <p class="mb-6">
-                    The resulting sequence is passed through BERT and then the same linear layer used elsewhere, producing an embedding for each token. After that, ColBERT does one more thing that queries don't get: it strips out the embeddings corresponding to punctuation marks, using a predefined list of punctuation tokens, to cut down on how many embeddings need to be stored per document.
+                    ColBERT then passes this resulting sequence through BERT, and then the same linear layer is used to produce an embedding for each token. After that, ColBERT does one more thing that it doesn't do for queries: it removes the embeddings corresponding to punctuation marks, using a predefined list of punctuation tokens, to reduce the number of embeddings stored per document.
                 </p>
                 <p class="mb-6">
-                    The reasoning behind this is a hypothesis rather than a proven fact: the authors believe punctuation embeddings, even though they're contextualized like everything else, don't contribute meaningfully to retrieval effectiveness, so there's little reason to pay the storage cost of keeping them around.
+                    The reasoning behind this is a hypothesis; it's not a proven fact. The authors assume that punctuation embeddings don't contribute meaningfully to retrieval effectiveness, even though they're contextualized like everything else, so they remove these embeddings to save storage space.
                 </p>
 
                 <figure class="my-10">
@@ -319,7 +319,7 @@
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">8. Putting It All Together</h2>
                 <p class="mb-6">
-                    Given a query <code>q = q₀q₁...ql</code> and a document <code>d = d₀d₁...dn</code>, ColBERT computes the bags of embeddings <code>Eq</code> and <code>Ed</code> as follows, where <code>#</code> denotes the <code>[mask]</code> tokens. One notation note before you read them: <code>CNN</code> here is just the paper's label for the linear projection layer from Section 4, not a convolutional neural network. There's no convolution happening anywhere in this pipeline.
+                    Given a query <code>q = q₀q₁...ql</code> and a document <code>d = d₀d₁...dn</code>, ColBERT turns them into two bags of embeddings <code>Eq</code> and <code>Ed</code> as follows; here, <code>#</code> represents the <code>[mask]</code> tokens. One important note before you read them: here, <code>CNN</code> is just the paper's label for the linear projection layer from Section 4; this is not a convolutional neural network. There's no convolution happening anywhere in this pipeline.
                 </p>
                 <div class="my-8 space-y-4">
                     <div class="flex items-baseline justify-between gap-6">
@@ -336,15 +336,18 @@
                     </div>
                 </div>
                 <p class="mb-6">
-                    These two equations are really just a compact restatement of everything above. For a query, ColBERT adds the <code>[Q]</code> token and <code>[mask]</code> padding, runs everything through BERT, passes it through the linear projection layer (written as <code>CNN</code> in the equation), and normalizes the result to get <code>Eq</code>. For a document, it adds <code>[D]</code>, runs it through BERT and the same linear projection layer, normalizes it, and then filters out the punctuation embeddings to arrive at <code>Ed</code>.
+                    These two equations are really just a compact way of summarizing everything above. For a query, ColBERT adds the <code>[Q]</code> token and <code>[mask]</code> padding, passes everything through BERT, sends it through the linear projection layer (written as <code>CNN</code> in the equation), and normalizes the resulting embeddings to get <code>Eq</code>. For a document, it adds <code>[D]</code>, passes it through BERT and the same linear projection layer, normalizes it, and removes the punctuation embeddings to arrive at <code>Ed</code>.
                 </p>
 
                 <h2 class="text-2xl sm:text-3xl text-gray-800 mt-10 sm:mt-12 mb-4 sm:mb-6">9. Conclusion</h2>
                 <p class="mb-6">
-                    Neither encoder does anything exotic on its own. Tokenize, mark the input type, run it through BERT, project it down with a linear layer, normalize it. What makes the design interesting is the handful of asymmetries between the two: query augmentation on one side, punctuation filtering on the other, a fixed length for queries versus a variable one for documents.
+                    None of the encoders does anything fancy on its own. The basic flow is pretty simple: ColBERT tokenizes the text, adds a special token to mark the input type, runs it through BERT, passes it down with a linear layer, and then normalizes it.
                 </p>
                 <p class="mb-6">
-                    Each of these choices exists for a reason grounded in the trade-off ColBERT is built around: keep documents cheap to store and index offline, while giving queries just enough flexibility at inference time to make late interaction actually work.
+                    What makes the design interesting is how the two encoders differ. The query augmentation adds extra <code>[mask]</code> tokens, while the document side filters out punctuation. There is a fixed length for queries, while the documents can have variable lengths.
+                </p>
+                <p class="mb-6">
+                    Each of these choices comes from the same trade-off ColBERT is built around: keep documents cheap to store and index offline, while giving queries just enough flexibility at search time to make late interaction work effectively.
                 </p>
             </div>
 
